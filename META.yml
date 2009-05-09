@@ -17,6 +17,7 @@ module_name: Perl::Metrics2
 name: Perl-Metrics2
 no_index:
   directory:
+    - examples
     - inc
     - share
     - t
@@ -33,4 +34,4 @@ resources:
   ChangeLog: http://fisheye2.atlassian.com/changelog/cpan/trunk/Perl-Metrics2
   license: http://dev.perl.org/licenses/
   repository: http://svn.ali.as/cpan/trunk/Perl-Metrics2
-version: 0.01
+version: 0.02
