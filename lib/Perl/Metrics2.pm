@@ -64,6 +64,8 @@ use 5.008005;
 use strict;
 use Carp                   ();
 use DBI                    ();
+use Time::HiRes            ();
+use Time::Elapsed          ();
 use File::Spec             ();
 use File::HomeDir          ();
 use File::ShareDir         ();
@@ -71,11 +73,15 @@ use File::Find::Rule       ();
 use File::Find::Rule::VCS  ();
 use File::Find::Rule::Perl ();
 use Params::Util           ();
+use Process                ();
+use Process::Storable      ();
+use Process::Delegatable   ();
 use PPI::Util              ();
 use PPI::Document          ();
+use PPI::Cache             ();
 use Module::Pluggable;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use constant ORLITE_FILE => File::Spec->catfile(
 	File::HomeDir->my_data,
@@ -89,7 +95,7 @@ use constant ORLITE_TIMELINE => File::Spec->catdir(
 	'timeline',
 );
 
-use ORLite          1.20 ();
+use ORLite          1.21 ();
 use ORLite::Migrate 0.03 {
 	file         => ORLITE_FILE,
 	create       => 1,
@@ -102,10 +108,145 @@ use ORLite::Migrate 0.03 {
 
 
 #####################################################################
+# Constructor
+
+sub new {
+	my $class = shift;
+	my $self  = bless { @_,
+		plugins => {},
+	}, $class;
+
+	# Load the plugins
+	foreach my $plugin ( $class->plugins ) {
+		eval "require $plugin";
+		die $@ if $@;
+		$self->{plugins}->{$plugin} = $plugin->new;
+		$self->{plugins}->{$plugin}->study if $self->study;
+	}
+
+	# Initialise the PPI cache if available
+	if ( $self->cache ) {
+		PPI::Cache->import( path => $self->cache );
+	}
+
+	return $self;
+}
+
+sub study {
+	$_[0]->{study};
+}
+
+sub cache {
+	$_[0]->{cache};
+}
+
+sub seen {
+	my $self = shift;
+	my $md5  = shift;
+	foreach my $plugin ( sort keys %{$self->{plugins}} ) {
+		next if $self->{plugins}->{$plugin}->{seen}->{$md5};
+		return 0;
+	}
+	return 1;
+}
+
+
+
+
+
+#####################################################################
 # Main Methods
 
+sub process_cache {
+	my $self = shift;
+	unless ( $self->cache ) {
+		Carp::croak("No cache provided, cannot process_cache");
+	}
+	unless ( $self->study ) {
+		Carp::croak("Must have study true to process_cache");
+	}
+
+	# Find all the files in the cache
+	$self->trace("Scanning cache directory " . $self->cache . "...");
+	my @files = File::Find::Rule->name(qr/\.ppi\z/)->in($self->cache);
+	$self->trace("Found " . scalar(@files) . " documents");
+
+	# Filter and sort the documents
+	$self->trace("Cleaning, filtering and sorting documents...");
+	@files = map {
+		# Remove the schwartian
+		$_->[1]
+	} sort {
+		# Smallest files first (for lowest parser stress)
+		$a->[2] <=> $b->[2]
+	} grep {
+		# Filter out things we've done already
+		not $self->seen($_->[1])
+	} map {
+		# Set up for the Schwartzian transform
+		/([a-f0-9]+).ppi\z/ ? [ $_, "$1", (stat($_))[7] ] : ()
+	} @files;
+	$self->trace("Filtered to " . scalar(@files) . " documents");
+
+	# Shortcut if there's nothing to do
+	unless ( @files ) {
+		return 1;
+	}
+
+	# Remove indexes to speed up inserts
+	$self->trace("Removing indexes for faster inserts...");
+	foreach my $col ( qw{ md5 name package value version } ) {
+		my $sql = "DROP INDEX IF EXISTS file_metric__$col";
+		$self->trace($sql);
+		Perl::Metrics2->do($sql);
+	}
+
+	my $last  = 0;
+	my $count = 0;
+	my $total = scalar(@files);
+	my $time  = Time::HiRes::time();
+	my $rate  = 0;
+	my $left  = 0;
+	$self->begin;
+	foreach my $md5 ( @files ) {
+		$self->trace(
+			sprintf(
+				"%s - %d of %d @ %.1f/sec (%s remaining)",
+				$md5, ++$count, $total, $rate,
+				Time::Elapsed::elapsed($left),
+			)
+		);
+
+		# Fetch the document from the cache and process it
+		my $document = PPI::Document->get_cache->get_document($md5);
+		unless ( $document ) {
+			warn("Failed to retrieve $md5 from the cache");
+			next;
+		}
+
+		$self->process_document($document, 'safe');
+		$rate = ($count - $last) / (Time::HiRes::time() - $time);
+		$left = ($total - $count + 1) / $rate;
+		next if $count % 100;
+		$last = $count;
+		$time = Time::HiRes::time();
+		$self->commit_begin;
+	}
+	$self->commit;
+
+	# Add the indexes back to the database
+	$self->trace("Restoring indexes...");
+	foreach my $col ( qw{ md5 name package value version } ) {
+		my $sql = "CREATE INDEX IF NOT EXISTS file_metric__$col ON file_metric ( $col )";
+		$self->trace($sql);
+		Perl::Metrics2->do($sql);
+	}
+
+	return 1;
+}
+
 sub process_distribution {
-	my $class = shift;
+	my $self = shift;
 
 	# Get and check the directory name
 	my $path = File::Spec->canonpath(shift);
@@ -119,17 +260,17 @@ sub process_distribution {
 	Carp::croak("Cannot index '$path'. No read permissions") unless -r _;
 
 	# Find the documents
-	my @files = File::Find::Rule->ignore_svn->no_index->perl_file->in($path);
-	$class->trace("$path: Found " . scalar(@files) . " files");
+	my @files = File::Find::Rule->ignore_svn->no_index->perl_module->in($path);
+	$self->trace("$path: Found " . scalar(@files) . " files");
 	foreach my $file ( @files ) {
-		$class->trace($file);
-		$class->process_file($file);
+		$self->trace($file);
+		$self->process_file($file);
 	}
 	return 1;
 }
 
 sub process_file {
-	my $class = shift;
+	my $self = shift;
 
 	# Get and check the filename
 	my $path = File::Spec->canonpath(shift);
@@ -142,6 +283,15 @@ sub process_file {
 	Carp::croak("Cannot index '$path'. File does not exist") unless -f $path;
 	Carp::croak("Cannot index '$path'. No read permissions") unless -r _;
 
+	if ( $self->study ) {
+		# If and only if every plugin has seen the document
+		# we can shortcut and don't need to load it.
+		my $md5 = PPI::Util::md5hex_file($path);
+		if ( $self->seen($md5) ) {
+			return 1;
+		}
+	}
+	
 	# Load the document
 	my $document = PPI::Document->new( $path,
 		readonly => 1,
@@ -151,21 +301,27 @@ sub process_file {
 		 next;
 	}
 
+	$self->process_document($document);
+}
+
+# Forcefully process a docucment
+sub process_document {
+	my $self     = shift;
+	my $document = shift;
+
 	# Create the plugin objects
-	foreach my $plugin ( $class->plugins ) {
-		# $class->trace("STARTING PLUGIN $plugin");
-		eval "require $plugin";
-		die $@ if $@;
-		$plugin->new->process_document($document);
+	foreach my $name ( sort keys %{$self->{plugins}} ) {
+		$self->{plugins}->{$name}->process_document($document, @_);
 	}
 
 	return 1;
 }
 
 sub index_distribution {
-	my $class = shift;
-	my $dist  = shift;
-	my $path  = shift;
+	my $self     = shift;
+	my $dist     = shift;
+	my $path     = shift;
+	my $hintsafe = !! shift;
 
 	# Find the documents
 	my @files = File::Find::Rule->ignore_svn
@@ -182,10 +338,11 @@ sub index_distribution {
 	} @files;
 
 	# Flush and push the files into the database
-	Perl::Metrics2->begin;
-	Perl::Metrics2::CpanFile->delete(
-		'where dist = ?', $dist,
-	);
+	unless ( $hintsafe ) {
+		Perl::Metrics2::CpanFile->delete(
+			'where dist = ?', $dist,
+		);
+	}
 	foreach my $file ( @files ) {
 		Perl::Metrics2::CpanFile->create(
 			dist => $dist,
@@ -193,7 +350,50 @@ sub index_distribution {
 			md5  => $md5{$file},
 		);
 	}
-	Perl::Metrics2->commit;
+
+	return 1;
+}
+
+
+
+
+
+#####################################################################
+# Index Optimisation Methods
+
+my @INDEX = (
+	[ 'file_metric', 'md5'     ],
+	[ 'file_metric', 'name'    ],
+	[ 'file_metric', 'package' ],
+	[ 'file_metric', 'value'   ],
+	[ 'file_metric', 'version' ],
+	[ 'cpan_file',   'dist'    ],
+	[ 'cpan_file',   'file'    ],
+	[ 'cpan_file',   'md5'     ],
+);
+
+sub index_remove {
+	my $self = shift;
+
+	$self->trace("Removing indexes...");
+	foreach ( @INDEX ) {
+		my $sql = "DROP INDEX IF EXISTS $_->[0]__$_->[1]";
+		$self->trace($sql);
+		Perl::Metrics2->do($sql);
+	}
+
+	return 1;
+}
+
+sub index_restore {
+	my $self = shift;
+
+	$self->trace("Restoring indexes...");
+	foreach ( @INDEX ) {
+		my $sql = "CREATE INDEX IF NOT EXISTS $_->[0]__$_->[1] ON $_->[0] ( $_->[1] )";
+		$self->trace($sql);
+		Perl::Metrics2->do($sql);
+	}
 
 	return 1;
 }
@@ -227,7 +427,7 @@ Adam Kennedy E<lt>adamk@cpan.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright 2005 - 2009 Adam Kennedy.
+Copyright 2009 Adam Kennedy.
 
 This program is free software; you can redistribute
 it and/or modify it under the same terms as Perl itself.

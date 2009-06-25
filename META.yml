@@ -8,7 +8,7 @@ build_requires:
 configure_requires:
   ExtUtils::MakeMaker: 6.42
 distribution_type: module
-generated_by: 'Module::Install version 0.87'
+generated_by: 'Module::Install version 0.91'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -22,16 +22,22 @@ no_index:
     - share
     - t
 requires:
+  CPAN::Mini::Visit: 0.02
   Class::Inspector: 1.23
   File::HomeDir: 0.82
   File::ShareDir: 1.00
   File::Spec: 0.80
-  ORLite: 1.20
+  ORLite: 1.21
   ORLite::Migrate: 0.02
-  Params::Util: 0.37
+  Params::Util: 1.00
+  Process: 0.27
+  Process::Delegatable: 0.27
+  Process::Storable: 0.27
+  Time::Elapsed: 0.24
+  Time::HiRes: 1.9718
   perl: 5.8.5
 resources:
   ChangeLog: http://fisheye2.atlassian.com/changelog/cpan/trunk/Perl-Metrics2
   license: http://dev.perl.org/licenses/
   repository: http://svn.ali.as/cpan/trunk/Perl-Metrics2
-version: 0.02
+version: 0.03

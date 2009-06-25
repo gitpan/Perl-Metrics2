@@ -4,7 +4,7 @@ package Perl::Metrics2::Plugin::Core;
 
 =head1 NAME
 
-Perl::Metrics::Plugin::Core - The Core Perl Metrics Package
+Perl::Metrics2::Plugin::Core - The Core Perl Metrics Package
 
 =head1 DESCRIPTION
 
@@ -27,7 +27,7 @@ use Perl::Metrics2::Plugin ();
 
 use vars qw{$VERSION @ISA};
 BEGIN {
-	$VERSION = '0.02';
+	$VERSION = '0.03';
 	@ISA     = 'Perl::Metrics2::Plugin';
 }
 
@@ -57,6 +57,39 @@ sub metric_lines {
 	return $newlines + 1;
 }
 
+=pod
+
+=head2 integer sloc
+
+The C<sloc> metric represents Source Lines of Code. That is, raw lines
+minus __END__ content, __DATA__ content, POD, comments and blank lines.
+
+=cut
+
+sub metric_sloc {
+	# Create the source document
+	my $document = $_[1]->clone;
+	$document->prune( sub {
+		# Cull out the normal content
+		! $_[1]->significant
+		and
+		# Cull out the high-volume whitespace tokens
+		! $_[1]->isa('PPI::Token::Whitespace')
+		and (
+			$_[1]->isa('PPI::Token::Comment')
+			or
+			$_[1]->isa('PPI::Token::Pod')
+			or
+			$_[1]->isa('PPI::Token::End')
+			or
+			$_[1]->isa('PPI::Token::Data')
+		)
+	} );
+
+	# Split the serialized for and find the number of non-blank lines
+	return scalar grep { /\S/ } split /\n/, $document->serialize;
+}	
+	
 =pod
 
 =head2 integer tokens 
@@ -101,7 +134,7 @@ sub metric_significant_tokens {
 
 Bugs should be reported via the CPAN bug tracker at
 
-L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=Perl-Metrics>
+L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=Perl-Metrics2>
 
 For other issues, contact the author.
 
@@ -115,7 +148,7 @@ L<Perl::Metrics::Plugin>, L<Perl::Metrics>, L<PPI>
 
 =head1 COPYRIGHT
 
-Copyright 2005 - 2008 Adam Kennedy.
+Copyright 2009 Adam Kennedy.
 
 This program is free software; you can redistribute
 it and/or modify it under the same terms as Perl itself.

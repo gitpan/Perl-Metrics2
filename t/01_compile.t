@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+use 5.008005;
 use strict;
 BEGIN {
 	$|  = 1;
@@ -8,6 +9,5 @@ BEGIN {
 
 use Test::More tests => 2;
 
-ok( $] >= 5.008005, 'Perl version is new enough' );
-
-use_ok( 'Perl::Metrics2' );
+use_ok( 'Perl::Metrics2'        );
+use_ok( 'Perl::Metrics2::Parse' );
