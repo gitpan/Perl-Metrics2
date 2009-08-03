@@ -1,6 +1,4 @@
 Changes
-examples/ppicache.pl
-examples/scanauthor.pl
 inc/Module/Install.pm
 inc/Module/Install/Base.pm
 inc/Module/Install/Can.pm
@@ -10,7 +8,6 @@ inc/Module/Install/Metadata.pm
 inc/Module/Install/Scripts.pm
 inc/Module/Install/Share.pm
 inc/Module/Install/Win32.pm
-inc/Module/Install/With.pm
 inc/Module/Install/WriteAll.pm
 lib/Perl/Metrics2.pm
 lib/Perl/Metrics2/Parse.pm
@@ -29,6 +26,7 @@ script/pm2precache
 script/pm2preparse
 share/timeline/migrate-01.pl
 share/timeline/migrate-02.pl
+share/timeline/migrate-03.pl
 t/01_compile.t
 t/02_file_metric.t
 t/97_meta.t
