@@ -71,7 +71,7 @@ use Perl::Metrics2   ();
 
 use vars qw{$VERSION};
 BEGIN {
-	$VERSION = '0.04';
+	$VERSION = '0.05';
 }
 
 
@@ -92,9 +92,7 @@ merely as a convenience. You don't really need to think about this.
 
 sub new {
 	my $class = ref $_[0] ? ref shift : shift;
-	my $self  = bless {
-		seen => {},
-	}, $class;
+	my $self  = bless { }, $class;
 	return $self;
 }
 
@@ -134,76 +132,30 @@ sub destructive { 1 }
 #####################################################################
 # Perl::Metrics2::Plugin API
 
-=pod
-
-=head2 metrics
-
-The C<metrics> method provides the list of metrics that are provided
-by the metrics package. By default, this list is automatically
-generated for you scanning for C<metric_$name> methods that reside
-in the immediate package namespace.
-
-Returns a reference to a C<HASH> where the keys are the metric names,
-and the values are the "version" of the metric (for versioned metrics),
-or C<undef> if the metric is not versioned.
-
-=cut
-
-sub metrics {
-	my $self = shift;
-	$self->{_metrics} or
-	$self->{_metrics} = $self->_metrics;	
-}
-
-sub _metrics {
-	my $self    = shift;
-	my $class   = ref $self;
-	my $funcs   = Class::Inspector->functions($class)
-		or Carp::croak("Failed to get method list for '$class'");
-	my %metrics = map  { $_ => undef     }
-	              grep { _IDENTIFIER($_) }
-	              grep { s/^metric_//s   }
-	              @$funcs;
-	return \%metrics;
-}
-
-sub _metric {
-	my ($self, $document, $name) = @_;
-	my $method = "metric_$name";
-	$self->can($method) or Carp::croak("Bad metric name '$name'");
-	return scalar($self->$method($document));
-}
-
-# Prepopulate the seen index
-sub study {
+# Flush out old records
+sub flush {
 	my $self    = shift;
 	my $class   = $self->class;
 	my $version = $class->VERSION;
-	my $md5     = Perl::Metrics2->selectcol_arrayref(
-		'select distinct(md5) from file_metric where package = ? and version = ?',
+	Perl::Metrics2->do(
+		'delete from file_metric where package = ? and version = ?',
 		{}, $class, $version,
 	);
-	$self->{seen} = { map { $_ => 1 } @$md5 };
-	return 1;
 }
 
 sub process_document {
 	my $self     = shift;
 	my $class    = ref $self;
-	my $document = _INSTANCE(shift, 'PPI::Document');
-	unless ( $document ) {
+	my %params   = @_;
+	my $document = $params{document};
+	my $md5      = $params{md5};
+	my $hintsafe = $params{hintsafe};
+	unless ( _INSTANCE($document, 'PPI::Document') ) {
 		Carp::croak("Did not provide a PPI::Document object");
-	}
-	my $hintsafe = !! shift;
-
-	# Shortcut if already processed
-	my $md5 = $document->hex_id;
-	if ( $self->{seen}->{$md5} ) {
-		return 1;
 	}
 
 	# Generate the new metrics values
-	my %metric = $self->process_metrics($document, @_);
+	my %metric = $self->process_metrics($document);
 
 	# Flush out the old records and write the new metrics
 	unless ( $hintsafe ) {
@@ -218,8 +170,7 @@ sub process_document {
 
 	# Temporary accelerate version
 	SCOPE: {
-		my $dbh = Perl::Metrics2->dbh;
-		my $sth = $dbh->prepare(
+		my $sth = Perl::Metrics2->dbh->prepare(
 			'INSERT INTO file_metric ( md5, package, version, name, value ) VALUES ( ?, ?, ?, ?, ? )'
 		);
 		foreach my $name ( sort keys %metric ) {
@@ -227,30 +178,13 @@ sub process_document {
 		}
 		$sth->finish;
 	}
-	#foreach my $name ( sort keys %metric ) {
-		#Perl::Metrics2::FileMetric->create(
-			#md5     => $md5,
-			#package => $class,
-			#version => $class->VERSION,
-			#name    => $name,
-			#value   => $metric{$name},
-		#);
-	#}
-
-	# Remember that we have processed this document
-	$self->{seen}->{$md5} = 1;
 
 	return 1;
 }
 
 sub process_metrics {
-	my $self     = shift;
-	my $document = shift;
-	my %metric   = %{$self->metrics};
-	foreach my $name ( sort keys %metric ) {
-		$metric{$name} = $self->_metric($document, $name);
-	}
-	return %metric;
+	my $class = ref($_[0]) || $_[0];
+	die "Plugin $class does not implement process_metrics";
 }
 
 1;

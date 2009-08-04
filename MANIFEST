@@ -10,6 +10,7 @@ inc/Module/Install/Share.pm
 inc/Module/Install/Win32.pm
 inc/Module/Install/WriteAll.pm
 lib/Perl/Metrics2.pm
+lib/Perl/Metrics2/CpanFile.pm
 lib/Perl/Metrics2/Parse.pm
 lib/Perl/Metrics2/Plugin.pm
 lib/Perl/Metrics2/Plugin/Core.pm
