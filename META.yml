@@ -24,6 +24,7 @@ requires:
   CPAN::Mini::Visit: 0.02
   Class::Inspector: 1.23
   File::Find::Rule: 0.30
+  File::Find::Rule::Perl: 1.09
   File::Find::Rule::VCS: 1.06
   File::HomeDir: 0.82
   File::Next: 1.04
@@ -42,4 +43,4 @@ resources:
   ChangeLog: http://fisheye2.atlassian.com/changelog/cpan/trunk/Perl-Metrics2
   license: http://dev.perl.org/licenses/
   repository: http://svn.ali.as/cpan/trunk/Perl-Metrics2
-version: 0.05
+version: 0.06
